@@ -1,1 +1,39 @@
-# FDPOG: The code will be released after the paper is published.
+# FDPOG
+The code will be continuously updated
+## Prerequisites
+
+- Install pip
+- Python 3.8
+
+- PyTorch 1.11.0
+
+- functorch 0.1.1
+
+```bash
+pip install functorch==0.1.1
+```
+
+- opacus 1.1
+
+```bash
+conda install -c conda-forge opacus=1.1
+```
+
+- matplotlib 3.4.3
+
+```bash
+conda install -c conda-forge matplotlib=3.4.3
+```
+
+- Other requirements
+
+```bash
+conda install pandas tbb regex tqdm tensorboardX=2.2
+pip install tensorboard==2.9
+```
+
+Scripts to reproduce experiments located at FDPOG/experiment_scripts, results saved to FDPOG/runs.
+
+```
+bash ./experiment_scripts/mnist_script.sh
+```
