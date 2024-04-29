@@ -16,13 +16,13 @@ pip install functorch==0.1.1
 - opacus 1.1
 
 ```bash
-conda install -c conda-forge opacus=1.1
+pip install -c conda-forge opacus=1.1
 ```
 
 - matplotlib 3.4.3
 
 ```bash
-conda install -c conda-forge matplotlib=3.4.3
+pip install -c conda-forge matplotlib=3.4.3
 ```
 
 - Other requirements
