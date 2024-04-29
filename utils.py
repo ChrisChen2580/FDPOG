@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import torch
 from opacus.accountants.analysis.gdp import compute_eps_poisson
 from opacus.accountants.analysis.rdp import compute_rdp, get_privacy_spent
+from opacus.accountants.utils import get_noise_multiplier
 
 
 def privacy_checker(sample_rate, config):
@@ -47,6 +48,18 @@ def privacy_checker(sample_rate, config):
         )
     else:
         raise ValueError(f"Unknown accountant {config['accountant']}. Try 'rdp' or 'gdp'.")
+        
+        
+def get_sigma(target_epsilon, target_delta, sample_rate, weight, epochs, accountant='rdp'):
+    num_steps = int(epochs / sample_rate)
+    noise_multiplier=get_noise_multiplier(
+            target_epsilon=target_epsilon,
+            target_delta=target_delta,
+            sample_rate=sample_rate*weight,
+            epochs = epochs,
+            accountant=accountant
+        ),
+    return noise_multiplier
 
 
 def get_grads(named_parameters, group, num_groups):

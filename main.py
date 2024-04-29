@@ -16,7 +16,7 @@ from privacy_engines.dpsgd_global_adaptive_engine import DPSGDGlobalAdaptivePriv
 from privacy_engines.dpnsgd_engine import DPNSGDPrivacyEngine
 from privacy_engines.fdp_engine import FDP_PrivacyEngine
 from trainers import create_trainer
-from utils import privacy_checker
+from utils import privacy_checker, get_sigma
 from writer import Writer
 
 
@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="mnist",
                         help="Dataset to train on.")
     parser.add_argument("--method", type=str, default="regular",
-                        choices=["regular", "dpsgd", "dpnsgd", "dpsgd-f", "dpsgd-global-adapt", "IS"],
+                        choices=["regular", "dpsgd", "dpsur", "dpnsgd", "dpsgd-f", "dpsgd-global-adapt", "dp-is-sgd", "fdp"],
                         help="Method for training and clipping.")
 
     parser.add_argument("--config", default=[], action="append",
@@ -90,13 +90,24 @@ def main():
             noise_multiplier=cfg["noise_multiplier"],
             max_grad_norm=cfg["l2_norm_clip"]  # C
         )
-    elif cfg["method"] == "dpnsgd":
-        privacy_engine = DPNSGDPrivacyEngine(accountant=cfg["accountant"])
+    elif cfg["method"] == "dpsur":
+        privacy_engine = PrivacyEngine(accountant=cfg["accountant"])
         model, optimizer, train_loader = privacy_engine.make_private(
             module=model,
             optimizer=optimizer,
             data_loader=train_loader,
             noise_multiplier=cfg["noise_multiplier"],
+            max_grad_norm=cfg["l2_norm_clip"]
+        )
+    elif cfg["method"] == "dpnsgd":
+        privacy_engine = DPNSGDPrivacyEngine(accountant=cfg["accountant"])
+        model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+            module=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            epochs=cfg["max_epochs"],
+            target_epsilon=cfg["epsilon"],
+            target_delta=cfg["delta"],
             max_grad_norm=cfg["l2_norm_clip"]
         )
     elif cfg["method"] == "dpsgd-f":
@@ -117,7 +128,30 @@ def main():
             noise_multiplier=cfg["noise_multiplier"],  # sigma in sigma * C
             max_grad_norm=cfg["l2_norm_clip"],  # C
         )
-    elif cfg["method"] == "fdpog":
+    elif cfg["method"] == "dp-is-sgd":
+        _, group_counts = torch.unique(train_loader.dataset.z.cpu(), return_counts=True)
+        group_weights = 1 / group_counts
+        weights = group_weights[train_loader.dataset.z]
+        weight = max(weights / weights.sum() * len(train_loader.dataset)).item()
+
+        noise_multiplier=get_sigma(
+            target_epsilon=cfg["epsilon"],
+            target_delta=cfg["delta"],
+            sample_rate=sample_rate,
+            weight=weight,
+            epochs=cfg["max_epochs"],
+        )
+        print('for DP-IS-SGD, sample_rate={},weight={},sigma={}'.format(sample_rate, weight, noise_multiplier))
+        privacy_engine = FDP_PrivacyEngine(accountant=cfg["accountant"])
+        model, optimizer, train_loader = privacy_engine.make_private(
+            module=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            poisson_sampling=False,
+            noise_multiplier=noise_multiplier[0],
+            max_grad_norm=cfg["l2_norm_clip"]
+        )
+    elif cfg["method"] == "fdp":
         privacy_engine = FDP_PrivacyEngine(accountant=cfg["accountant"])
         model, optimizer, train_loader = privacy_engine.make_private(
             module=model,

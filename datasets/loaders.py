@@ -29,8 +29,7 @@ def get_loaders_from_config(cfg, device, **kwargs):
         make_valid_loader=cfg["make_valid_loader"],
         flatten=flatten,
         weighted_sampling=cfg["weighted_sampling"],
-        sample_rate=cfg["sample_rate"],
-        uniform_iid=cfg["uniform_iid"],
+        sample_rate=cfg["sample_rate"]
     )
 
     if cfg["dataset"] in ["celeba"]:
@@ -92,8 +91,12 @@ def get_loader(dset, device, batch_size, drop_last, weighted_sampling=None, samp
     if weighted_sampling is not None:
         num_groups, group_counts = torch.unique(dset.z, return_counts=True)
         groups = dset.z
-        #   for DP-IS-SGD group_weights = 1 / group_counts
-        group_weights = torch.ones(len(num_groups))
+        if weighted_sampling == 1:
+            # for auto-s
+            group_weights = 1 / group_counts
+        elif weighted_sampling == 2:
+            # for fdpog
+            group_weights = torch.ones(len(num_groups))
         weights = group_weights[groups]
         weights = weights / weights.sum() * len(dset)
         sampler = WeightedUniformWithReplacementSampler(weights,

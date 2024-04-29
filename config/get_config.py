@@ -1,5 +1,4 @@
 from .images import CFG_MAP_IMG
-from .tabular import CFG_MAP_TAB
 
 _IMAGE_DATASETS = ["mnist", "fashion-mnist", "svhn", "cifar10", "celeba"]
 _TABULAR_DATASETS = ["adult", "dutch"]
@@ -9,12 +8,10 @@ def get_config(dataset, method):
     if dataset in _IMAGE_DATASETS:
         cfg_map = CFG_MAP_IMG
         print("Note: protected group set to labels")
-    elif dataset in _TABULAR_DATASETS:
-        cfg_map = CFG_MAP_TAB
     else:
         raise ValueError(
             f"Invalid dataset {dataset}. "
-            + f"Valid choices are {_IMAGE_DATASETS + _TABULAR_DATASETS}."
+            + f"Valid choices are {_IMAGE_DATASETS}."
         )
 
     base_config = cfg_map["base"](dataset)

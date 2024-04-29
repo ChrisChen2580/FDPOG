@@ -47,14 +47,10 @@ def get_base_config(dataset):
 
         "weighted_sampling": None,
         "sample_rate": 0.001,
+        "epsilon": 3,
 
         "valid_metrics": ["accuracy", "accuracy_per_group"],
         "test_metrics": ["accuracy", "accuracy_per_group", "macro_accuracy"],
-        "evaluate_angles": False,
-        "evaluate_hessian": False,
-        "angle_comp_step": 200,
-        "num_hutchinson_estimates": 100,
-        "sampled_expected_loss": False,
 
         **net_configs
     }
@@ -69,6 +65,14 @@ def get_dpsgd_config(dataset):
         "activation": "tanh",
     }
 
+def get_dpsur_config(dataset):
+    return {
+        "activation": "tanh",
+        "sigma_v": 1.0,
+        "C_v": 0.001,
+        "bs_valid":256,
+        "beta":-1.0,
+    }
 
 def get_dpnsgd_config(dataset):
     return {
@@ -90,34 +94,6 @@ def get_dpsgd_f_config(dataset):
     }
 
 
-def get_naive_config(dataset):
-    return {
-        "activation": "tanh",
-        "counts_noise_multiplier": 10.0  # noise scale applied on bk
-    }
-
-
-def get_dro_config(dataset):
-    return {
-        "activation": "tanh",
-    }
-
-
-def get_fairness_lens_config(dataset):
-    return {
-        "activation": "tanh",
-        "gradient_regularizer": 1.0,
-        "boundary_regularizer": 1.0
-    }
-
-
-def get_dpsgd_global_config(dataset):
-    return {
-        "activation": "tanh",
-        "strict_max_grad_norm": 100,  # Z
-    }
-
-
 # TODO: change defaults
 def get_dpsgd_global_adapt_config(dataset):
     return {
@@ -129,16 +105,13 @@ def get_dpsgd_global_adapt_config(dataset):
     }
 
 
-def get_momentum_config(dataset):
+def get_dp_is_sgd_config(dataset):
     return {
         "activation": "tanh",
-        "k0": 2,
-        "r0": 0.3,
-        "r1": 0.6,
     }
 
 
-def get_is_config(dataset):
+def get_fdpog_config(dataset):
     return {
         "activation": "tanh",
     }
@@ -148,14 +121,10 @@ CFG_MAP_IMG = {
     "base": get_base_config,
     "regular": get_non_private_config,
     "dpsgd": get_dpsgd_config,
+    "dpsur": get_dpsur_config,
     "dpnsgd": get_dpnsgd_config,
-    "dpsgd-gc": get_dpsgd_gc_config,
     "dpsgd-f": get_dpsgd_f_config,
-    "naive": get_naive_config,
-    "dro": get_dro_config,
-    "fairness-lens": get_fairness_lens_config,
-    "dpsgd-global": get_dpsgd_global_config,
     "dpsgd-global-adapt": get_dpsgd_global_adapt_config,
-    "momentum": get_momentum_config,
-    "IS": get_is_config,
+    "dp-is-sgd": get_dp_is_sgd_config,
+    "fdp": get_fdpog_config,
 }

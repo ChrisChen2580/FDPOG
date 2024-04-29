@@ -6,7 +6,7 @@ from typing import List, Union
 
 from opacus import PrivacyEngine
 from opacus.optimizers import DPOptimizer
-from optimizers.fdp_optimizer import IS_Optimizer
+from optimizers.fdp_optimizer import FDP_Optimizer
 from torch import optim
 
 
@@ -37,7 +37,7 @@ class FDP_PrivacyEngine(PrivacyEngine):
         elif noise_generator is not None:
             generator = noise_generator
 
-        optimizer = IS_Optimizer(optimizer=optimizer,
+        optimizer = FDP_Optimizer(optimizer=optimizer,
                                  noise_multiplier=noise_multiplier,
                                  max_grad_norm=max_grad_norm,
                                  expected_batch_size=expected_batch_size,

@@ -1,10 +1,10 @@
+from typing import Optional, Callable
+
 import torch
-from opacus.optimizers.optimizer import _check_processed_flag, _get_flat_grad_sample, _mark_as_processed
-
-from optimizers.dpsgd_global_optimizer import DPSGD_Global_Optimizer
+from opacus.optimizers.optimizer import DPOptimizer, _check_processed_flag, _get_flat_grad_sample, _mark_as_processed
 
 
-class DPSGD_Global_Adaptive_Optimizer(DPSGD_Global_Optimizer):
+class DPSGD_Global_Adaptive_Optimizer(DPOptimizer):
 
     def clip_and_accumulate(self, strict_max_grad_norm):
         """
@@ -46,3 +46,37 @@ class DPSGD_Global_Adaptive_Optimizer(DPSGD_Global_Optimizer):
                 p.summed_grad = grad
 
             _mark_as_processed(p.grad_sample)
+            
+    def pre_step(
+            self, strict_max_grad_norm, closure: Optional[Callable[[], float]] = None
+    ) -> Optional[float]:
+        """
+        Perform actions specific to ``DPOptimizer`` before calling
+        underlying  ``optimizer.step()``
+        Args:
+            closure: A closure that reevaluates the model and
+                returns the loss. Optional for most optimizers.
+        """
+        self.clip_and_accumulate(strict_max_grad_norm)
+        if self._check_skip_next_step():
+            self._is_last_step_skipped = True
+            return False
+
+        self.add_noise()
+        self.scale_grad()
+
+        if self.step_hook:
+            self.step_hook(self)
+
+        self._is_last_step_skipped = False
+        return True
+
+    def step(self, strict_max_grad_norm, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
+        if closure is not None:
+            with torch.enable_grad():
+                closure()
+
+        if self.pre_step(strict_max_grad_norm):
+            return self.original_optimizer.step()
+        else:
+            return None

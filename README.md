@@ -34,6 +34,11 @@ pip install tensorboard==2.9
 
 Scripts to reproduce experiments located at FDPOG/experiment_scripts, results saved to FDPOG/runs.
 
+## MNIST
+
 ```
 bash ./experiment_scripts/mnist_script.sh
 ```
+
+when compared with AUTO-S, it needs to use gradient normalization, please refer to [Automatic clipping: Differentially private deep learning made easier and stronger](https://proceedings.neurips.cc/paper_files/paper/2023/hash/8249b30d877c91611fd8c7aa6ac2b5fe-Abstract-Conference.html)
+

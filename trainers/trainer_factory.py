@@ -1,4 +1,4 @@
-from .trainer import RegularTrainer, DpsgdTrainer, DpnsgdTrainer, DpsgdFTrainer, \
+from .trainer import RegularTrainer, DpsgdTrainer, DPSURTrainer, DpnsgdTrainer, DpsgdFTrainer, DpissgdTrainer,\
     DpsgdGlobalAdaptiveTrainer, FDPTrainer
 
 
@@ -19,13 +19,8 @@ def create_trainer(
         'max_epochs': config['max_epochs'],
         'num_groups': config['num_groups'],
         'selected_groups': config['selected_groups'],
-        'evaluate_angles': config['evaluate_angles'],
-        'evaluate_hessian': config['evaluate_hessian'],
-        'angle_comp_step': config['angle_comp_step'],
         'lr': config['lr'],
-        'seed': config['seed'],
-        'num_hutchinson_estimates': config['num_hutchinson_estimates'],
-        'sampled_expected_loss': config['sampled_expected_loss']
+        'seed': config['seed']
     }
 
     if config["method"] == "regular":
@@ -51,6 +46,24 @@ def create_trainer(
             writer,
             evaluator,
             device,
+            delta=config["delta"],
+            **kwargs
+        )
+    elif config["method"] == "dpsur":
+        trainer = DPSURTrainer(
+            model,
+            optimizer,
+            privacy_engine,
+            train_loader,
+            valid_loader,
+            test_loader,
+            writer,
+            evaluator,
+            device,
+            sigma_v=config["sigma_v"],
+            C_v=config["C_v"],
+            bs_valid=config["bs_valid"],
+            beta=config["beta"],
             delta=config["delta"],
             **kwargs
         )
@@ -84,8 +97,8 @@ def create_trainer(
             counts_noise_multiplier=config["counts_noise_multiplier"],  # noise scale applied on mk and ok
             **kwargs
         )
-    elif config["method"] == "dro":
-        trainer = DroTrainer(
+    elif config["method"] == "dp-is-sgd":
+        trainer = DpissgdTrainer(
             model,
             optimizer,
             privacy_engine,
@@ -96,21 +109,6 @@ def create_trainer(
             evaluator,
             device,
             delta=config["delta"],
-            **kwargs
-        )
-    elif config["method"] == "dpsgd-global":
-        trainer = DpsgdGlobalTrainer(
-            model,
-            optimizer,
-            privacy_engine,
-            train_loader,
-            valid_loader,
-            test_loader,
-            writer,
-            evaluator,
-            device,
-            delta=config["delta"],
-            strict_max_grad_norm=config["strict_max_grad_norm"],
             **kwargs
         )
     elif config["method"] == "dpsgd-global-adapt":
@@ -131,7 +129,7 @@ def create_trainer(
             threshold=config["threshold"],
             **kwargs
         )
-    elif config["method"] == "FDP":
+    elif config["method"] == "fdp":
         trainer = FDPTrainer(
             model,
             optimizer,

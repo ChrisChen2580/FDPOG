@@ -6,13 +6,11 @@ import numpy as np
 import pandas as pd
 import torch
 from datasets.loaders import get_loader
-from functorch import make_functional, vjp, grad
 from torch.nn.functional import cosine_similarity
 from tqdm import tqdm
 from utils import *
-from tools.DROLoss import LossComputer
-from opacus.accountants.rdp import RDPAccountant
-from tools.minimize_helper import *
+import copy
+from datasets.sampling import get_data_loaders_possion
 
 
 class BaseTrainer:
@@ -76,16 +74,13 @@ class BaseTrainer:
             if self.method == "regular":
                 grad_norms, _, sum_grad_vec_batch, sum_clip_grad_vec_batch = self.get_sum_grad_batch_from_vec(
                     per_sample_grads, group)
-            elif self.method in ["dpsgd", "dpnsgd", "dpsgd-global-adapt"]:
+            elif self.method in ["dpsgd", "dpnsgd", "dp-is-sgd", "dpsgd-global-adapt", "fdp"]:
                 grad_norms, _, sum_grad_vec_batch, sum_clip_grad_vec_batch = self.get_sum_grad_batch_from_vec(
                     per_sample_grads, group, clipping_bound=self.optimizer.max_grad_norm)
             elif self.method == "dpsgd-f":
                 C = self.compute_clipping_bound_per_sample(per_sample_grads, group)
                 grad_norms, _, sum_grad_vec_batch, sum_clip_grad_vec_batch = self.get_sum_grad_batch_from_vec(
                     per_sample_grads, group)
-            elif self.method == "IS":
-                grad_norms, _, sum_grad_vec_batch, sum_clip_grad_vec_batch = self.get_sum_grad_batch_from_vec(
-                    per_sample_grads, group, clipping_bound=self.optimizer.max_grad_norm)
 
 
             _, group_counts_batch = split_by_group(data, target, group, self.num_groups, return_counts=1)
@@ -114,8 +109,8 @@ class BaseTrainer:
         if self.method != "regular":
             if self.method in ["dpsgd-f", "dpsgd-global-adapt"]:
                 self._update_privacy_accountant()
-            if self.method in ["IS"]:
-                self.compute_weights(group_ave_grad_norms)
+            if self.method in ["fdp"]:
+                print('the core code is not yet implemented')
 
             epsilon = self.privacy_engine.get_epsilon(delta=self.delta)
             print(f"(ε = {epsilon:.2f}, δ = {self.delta})")
@@ -135,7 +130,7 @@ class BaseTrainer:
         while self.epoch < self.max_epochs:
             epoch_start_time = time.time()
             self.model.train()
-            avg_grad_norms, max_grads, norm_avg_grad, losses, group_losses, sn = self._train_epoch()
+            avg_grad_norms, max_grads, norm_avg_grad, losses, group_losses = self._train_epoch()
 
             group_loss_epochs.append([self.epoch, np.mean(losses)] + list(group_losses))
             avg_grad_norms_epochs.append([self.epoch] + list(avg_grad_norms))
@@ -350,6 +345,167 @@ class DpsgdTrainer(BaseTrainer):
         self.sample_rate = sample_rate
 
 
+class DPSURTrainer(BaseTrainer):
+    def clipping_scale_fn(self, grad_norm, idx, clipping_bound):
+        return min(1, clipping_bound / (grad_norm + 1e-6))
+
+    def __init__(
+            self,
+            model,
+            optimizer,
+            privacy_engine,
+            train_loader,
+            valid_loader,
+            test_loader,
+            writer,
+            evaluator,
+            device,
+            sigma_v,
+            C_v,
+            bs_valid,
+            beta,
+            delta=1e-5,
+            **kwargs
+    ):
+        super().__init__(
+            model,
+            optimizer,
+            train_loader,
+            valid_loader,
+            test_loader,
+            writer,
+            evaluator,
+            device,
+            **kwargs
+        )
+
+        self.privacy_engine = privacy_engine
+        self.delta = delta
+        self.last_valid_loss = 100000.0
+        self.sigma_v = sigma_v
+        self.C_v = C_v
+        self.bs_valid = bs_valid
+        self.beta = beta
+        self.last_model = model
+        self.t = 1
+        self.privacy_step_history = []
+        self.minibatch_loader_for_valid, _ = get_data_loaders_possion(minibatch_size=self.bs_valid, microbatch_size=1,
+                                                                      iterations=1)
+
+    def _train_epoch(self, param_for_step=None):
+        # Get per-sample losses for this method
+        criterion = torch.nn.CrossEntropyLoss()
+        losses = []
+        losses_per_group = np.zeros(self.num_groups)
+        num_batch = len(tqdm(self.train_loader))
+        all_grad_norms = [[] for _ in range(self.num_groups)]
+        group_max_grads = [0] * self.num_groups
+        g_B_k_norms = [[] for _ in range(self.num_groups)]
+
+        # 一个epoch接受update的次数
+        t = 0
+
+        for _batch_idx, (data, target, group) in enumerate(tqdm(self.train_loader)):
+            self.model.train()
+            data, target = data.to(self.device), target.to(self.device)
+            self.optimizer.zero_grad()
+            output = self.model(data)
+            loss = criterion(output, target)
+            losses_per_group = self.get_losses_per_group(criterion, data, target, group,
+                                                         losses_per_group)
+            loss.backward()
+
+            per_sample_grads = self.flatten_all_layer_params()
+
+            grad_norms, _, sum_grad_vec_batch, sum_clip_grad_vec_batch = self.get_sum_grad_batch_from_vec(
+                per_sample_grads, group, clipping_bound=self.optimizer.max_grad_norm)
+
+            # average sum of grads,
+            _, group_counts_batch = split_by_group(data, target, group, self.num_groups, return_counts=1)
+            g_B, g_B_k, bar_g_B, bar_g_B_k = self.mean_grads_over(group_counts_batch, sum_grad_vec_batch,
+                                                                  sum_clip_grad_vec_batch)
+
+            for i in range(self.num_groups):
+                if len(grad_norms[i]) != 0:
+                    all_grad_norms[i] = all_grad_norms[i] + grad_norms[i]
+                    group_max_grads[i] = max(group_max_grads[i], max(grad_norms[i]))
+                    g_B_k_norms[i].append(torch.linalg.norm(g_B_k[i]).item())
+
+            self.optimizer.step()
+
+            # 主要逻辑
+            valid_dl = self.minibatch_loader_for_valid(self.train_loader.dataset)
+            valid_loss, valid_accuracy = self.validation(valid_dl)
+
+            deltaE = valid_loss - self.last_valid_loss
+            deltaE = torch.tensor(deltaE).cpu()
+            # print("Delta E:",deltaE)
+
+            deltaE = np.clip(deltaE, -self.C_v, self.C_v)
+            deltaE_after_dp = 2 * self.C_v * self.sigma_v * np.random.normal(0, 1) + deltaE
+
+            # print("Delta E after dp:",deltaE_after_dp)
+
+            if deltaE_after_dp < self.beta * self.C_v:
+                self.last_valid_loss = valid_loss
+                self.last_model = copy.deepcopy(self.model)
+                self.t = self.t + 1
+                t = t + 1
+                self.privacy_step_history.append([self.sigma_v, self.bs_valid / len(self.train_loader.dataset)])
+                # print("accept updates，the number of updates t：", format(self.t))
+                # print("accept updates in current epoch，the number of updates t：", format(t))
+            else:
+                # print("reject updates")
+                # 如果被reject则accountant不会累积这一个step
+                # 分情况，当self.optimizer.step()后，accountant.history会累积一个step，先把该step给pop出去，若step>1，则减一后放回来，若step==1则不放回
+                if len(self.privacy_engine.accountant.history) >= 1:
+                    last_noise_multiplier, last_sample_rate, num_steps = self.privacy_engine.accountant.history.pop()
+                    if num_steps > 1:
+                        num_steps -= 1
+                        self.privacy_engine.accountant.history.append(
+                            (last_noise_multiplier, last_sample_rate, num_steps))
+
+                self.model.load_state_dict(self.last_model.state_dict(), strict=True)
+
+            losses.append(loss.item())
+            # print(self.privacy_engine.accountant.history)
+
+        self._update_privacy_accountant()
+        epsilon = self.privacy_engine.get_epsilon(delta=self.delta)
+        print(f"(ε = {epsilon:.2f}, δ = {self.delta})")
+        privacy_dict = {"epsilon": epsilon, "delta": self.delta}
+        self.writer.record_dict("Privacy", privacy_dict, step=0, save=True, print_results=False)
+        group_ave_grad_norms = [np.mean(all_grad_norms[i]) for i in range(self.num_groups)]
+        group_norm_grad_ave = [np.mean(g_B_k_norms[i]) for i in range(self.num_groups)]
+        return group_ave_grad_norms, group_max_grads, group_norm_grad_ave, losses, losses_per_group / num_batch
+
+    def validation(self, test_loader):
+        self.model.eval()
+        num_examples = 0
+        test_loss = 0
+        correct = 0
+
+        with torch.no_grad():
+            for _batch_idx, (data, target, group) in enumerate(test_loader):
+                data, target = data.to(self.device), target.to(self.device)
+                output = self.model(data)
+
+                test_loss += torch.nn.functional.cross_entropy(output, target, reduction='sum')
+
+                pred = output.max(1, keepdim=True)[1]
+                correct += pred.eq(target.view_as(pred)).sum().item()
+                num_examples += len(data)
+        test_loss /= num_examples
+        test_acc = 100. * correct / num_examples
+
+        return test_loss, test_acc
+
+    def _update_privacy_accountant(self):
+        for step in self.privacy_step_history:
+            self.privacy_engine.accountant.step(noise_multiplier=step[0], sample_rate=step[1])
+        self.privacy_step_history = []
+
+
 class DpnsgdTrainer(BaseTrainer):
     """Class for DPSGD training"""
 
@@ -515,6 +671,45 @@ class DpsgdFTrainer(BaseTrainer):
             per_sample_clipping_bound.append(Ck[group_idx])
 
         return torch.Tensor(per_sample_clipping_bound).to(device=self.device)
+
+
+class DpissgdTrainer(BaseTrainer):
+    """Class for DPSGD training"""
+
+    # given norm of gradient, computes S such that clipped gradient = S * gradient
+    def clipping_scale_fn(self, grad_norm, idx, clipping_bound):
+        return min(1, clipping_bound / grad_norm)
+
+    def __init__(
+            self,
+            model,
+            optimizer,
+            privacy_engine,
+            train_loader,
+            valid_loader,
+            test_loader,
+            writer,
+            evaluator,
+            device,
+            delta=1e-5,
+            sample_rate=0.005,
+            **kwargs
+    ):
+        super().__init__(
+            model,
+            optimizer,
+            train_loader,
+            valid_loader,
+            test_loader,
+            writer,
+            evaluator,
+            device,
+            **kwargs
+        )
+
+        self.privacy_engine = privacy_engine
+        self.delta = delta
+        self.sample_rate = sample_rate
 
 
 class DpsgdGlobalAdaptiveTrainer(BaseTrainer):
