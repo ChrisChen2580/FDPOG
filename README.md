@@ -28,7 +28,7 @@ conda install -c conda-forge matplotlib=3.4.3
 - Other requirements
 
 ```bash
-conda install pandas tbb regex tqdm tensorboardX=2.2
+pip install pandas tbb regex tqdm tensorboardX=2.2
 pip install tensorboard==2.9
 ```
 
