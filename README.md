@@ -1,5 +1,5 @@
 # FDPOG
-The code will be continuously updated
+Official implementation of “**FDPOG: Private Model Training with Fair Differential Privacy Oriented Gradient**”
 ## Prerequisites
 
 - Install pip
